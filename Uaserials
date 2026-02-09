@@ -1,0 +1,117 @@
+(function () {
+    'use strict';
+
+    var network = new Lampa.Reguest();
+    var base_url = 'https://uaserials.com/';
+
+    function startPlugin() {
+        // Додаємо балансер в Lampa
+        Lampa.Online.add({
+            title: 'UASerials',
+            id: 'uaserials',
+            icon: '', // Можна додати іконку
+            search: function (title, original_title, year) {
+                // Функція пошуку по назві, оригіналу, року
+                var search_query = encodeURIComponent(title + ' ' + (original_title || '') + ' ' + year).trim();
+                var url = base_url + 'search?q=' + search_query; // Припускаю, що пошук через /search?q= (перевір з сайту)
+
+                return new Promise(function (resolve, reject) {
+                    network.silent(url, function (html) {
+                        var $html = $(html);
+                        var results = [];
+
+                        $html.find('.item-list .item').each(function () { // Змініть селектор на реальний клас з сайту (з твоєї HTML – '.item' або подібне)
+                            var link = $(this).find('a').attr('href');
+                            var name = $(this).find('.title').text().trim();
+                            results.push({
+                                url: base_url + link,
+                                title: name
+                            });
+                        });
+
+                        resolve(results);
+                    }, reject);
+                });
+            },
+            movie: function (params) {
+                // Для фільмів: витягуємо посилання на плеєр
+                return new Promise(function (resolve, reject) {
+                    network.silent(params.url, function (html) {
+                        var $html = $(html);
+                        var iframe_src = $html.find('iframe.player').attr('src'); // Змініть на реальний селектор плеєра (наприклад, '#player iframe')
+                        if (iframe_src) {
+                            // Якщо плеєр – витягуємо m3u8 або mp4 з iframe (може знадобитися ще один запит)
+                            resolve([{ quality: 'HD', url: iframe_src }]); // Приклад, адаптуй під реальний плеєр
+                        } else {
+                            reject('No video found');
+                        }
+                    }, reject);
+                });
+            },
+            serial: function (params) {
+                // Для серіалів: витягуємо сезони та епізоди
+                return new Promise(function (resolve, reject) {
+                    network.silent(params.url, function (html) {
+                        var $html = $(html);
+                        var seasons = {};
+
+                        $html.find('.season-list .season').each(function () { // Адаптуй селектори
+                            var season_num = $(this).data('season');
+                            seasons[season_num] = [];
+                            $(this).find('.episode').each(function () {
+                                var ep_num = $(this).data('episode');
+                                var ep_url = base_url + $(this).attr('href'); // URL епізоду, наприклад /11520-ekstraordynarna-s1e1.html
+                                seasons[season_num].push({
+                                    episode: ep_num,
+                                    url: ep_url
+                                });
+                            });
+                        });
+
+                        resolve(seasons);
+                    }, reject);
+                });
+            },
+            episode: function (params) {
+                // Витягуємо відео для конкретного епізоду
+                return new Promise(function (resolve, reject) {
+                    network.silent(params.url, function (html) {
+                        var $html = $(html);
+                        var iframe_src = $html.find('iframe.player').attr('src');
+                        if (iframe_src) {
+                            // Якщо потрібно, парсити плеєр (наприклад, якщо moonwalk – запит на /api/playlist)
+                            network.silent(iframe_src, function (player_html) {
+                                // Витягуємо m3u8 з player_html, наприклад var player = new Playerjs({file: 'url.m3u8'});
+                                var m3u8 = player_html.match(/file:\s*['"](.*?)['"]/)[1];
+                                resolve([{ quality: 'HD', url: m3u8 }]);
+                            }, reject);
+                        } else {
+                            reject('No video');
+                        }
+                    }, reject);
+                });
+            }
+        });
+
+        // Додаємо налаштування (опціонально)
+        Lampa.SettingsApi.addParam({
+            component: 'online',
+            param: {
+                name: 'uaserials_enabled',
+                type: 'trigger',
+                default: true
+            },
+            field: {
+                name: 'UASerials',
+                description: 'Включити джерело UASerials'
+            }
+        });
+
+        Lampa.Noty.show('Плагін UASerials додано!');
+    }
+
+    if (!window.uaserials_ready) {
+        startPlugin();
+        window.uaserials_ready = true;
+    }
+})();
